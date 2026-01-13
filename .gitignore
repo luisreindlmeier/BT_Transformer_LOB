@@ -1,8 +1,52 @@
+# Python
 .venv/
+venv/
+env/
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Training outputs
+lightning_logs/
+wandb/
+checkpoints/
+
+# Data (too large for Git)
+data/00_raw/
+data/01_preprocessed/
+data/02_split/
+data/03_normalized/
+data/03_normalized_NEW/
+data/04_windows/
+data/04_windows_NEW/
+*.npy
+*.parquet
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# OS
+Thumbs.db
+~$*
+
+# Misc
+*.csv
+*.log
 *.pyc
 *.pyo
-data/
-.DS_Store
 .pytest_cache/
+
+# Google Cloud SDK
+google-cloud-sdk/
+
 *.egg-info/
