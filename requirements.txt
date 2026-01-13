@@ -1,5 +1,13 @@
+# Core ML & Data
 numpy>=1.26
 pandas>=2.0
 scikit-learn>=1.4
+pyarrow>=14.0
+
+# Deep Learning
 torch>=2.1
-tqdm
+pytorch-lightning>=2.0
+torchmetrics>=1.0
+
+# Utilities
+tqdm>=4.65
