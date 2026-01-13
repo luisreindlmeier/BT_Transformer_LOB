@@ -248,7 +248,7 @@ def main() -> None:
 
     print("\nLoading events...")
     events_raw = pd.concat(
-        [pd.read_csv(f, header=None, names=RAW_EVENT_COLS) for f in msg_files],
+        [pd.read_csv(f, header=None, names=RAW_EVENT_COLS, encoding="latin1") for f in msg_files],
         ignore_index=True,
     )
     events_raw = events_raw.drop(columns=["order_id"])
@@ -260,14 +260,14 @@ def main() -> None:
     events_raw["direction"] = events_raw["direction"].astype(np.int32)
 
     print("Loading orderbook...")
-    sample = pd.read_csv(ob_files[0], nrows=1, header=None)
+    sample = pd.read_csv(ob_files[0], nrows=1, header=None, encoding="latin1")
     n_levels = sample.shape[1] // 4
     if n_levels <= 0:
         raise RuntimeError("Invalid orderbook depth detected")
 
     ob_cols = build_orderbook_columns(n_levels)
     ob_raw = pd.concat(
-        [pd.read_csv(f, header=None, names=ob_cols) for f in ob_files],
+        [pd.read_csv(f, header=None, names=ob_cols, encoding="latin1") for f in ob_files],
         ignore_index=True,
     )
 
