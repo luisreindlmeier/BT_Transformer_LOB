@@ -14,6 +14,10 @@ from torch.utils.data import Dataset, DataLoader
 
 from sklearn.metrics import f1_score, confusion_matrix
 
+import sys
+sys.path.append(str(Path(__file__).parent.parent))
+from models.simple_mlp import SimpleMLP
+
 DEVICE = (
     "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available() else
     ("cuda" if torch.cuda.is_available() else "cpu")
@@ -188,24 +192,6 @@ def make_loader(root: Path, split: str, feature_type: str, shuffle: bool, sample
         pin_memory=PIN_MEMORY,
         drop_last=False,
     )
-
-# -----------------------------------------------------------------------------
-# MODEL
-# -----------------------------------------------------------------------------
-
-class SimpleMLP(nn.Module):
-    def __init__(self, input_dim: int):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, 3),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
 
 # -----------------------------------------------------------------------------
 # TRAIN / EVAL

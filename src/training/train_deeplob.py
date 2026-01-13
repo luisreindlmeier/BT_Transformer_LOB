@@ -9,6 +9,10 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import f1_score, confusion_matrix
 from tqdm import tqdm
 
+import sys
+sys.path.append(str(Path(__file__).parent.parent))
+from models.deeplob import DeepLOB
+
 TICKER = "CSCO"
 DATA_ROOT = Path("data/04_windows_NEW") / TICKER
 
@@ -80,59 +84,6 @@ class WindowDataset(Dataset):
         x = torch.from_numpy(np.asarray(self.X[idx], dtype=np.float32).copy())
         y = torch.tensor(self.y[idx]).long()
         return x, y
-
-# =============================================================================
-# DEEPLOB MODEL
-# =============================================================================
-
-class DeepLOB(nn.Module):
-    """
-    Simplified DeepLOB-style architecture
-    """
-
-    def __init__(self, n_features: int):
-        super().__init__()
-
-        # Input: (B, 1, T, F)
-        self.conv_block_1 = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=(1, 5), padding=(0, 2)),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, kernel_size=(1, 5), padding=(0, 2)),
-            nn.ReLU(),
-        )
-
-        self.conv_block_2 = nn.Sequential(
-            nn.Conv2d(32, 64, kernel_size=(3, 1), padding=(1, 0)),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=(3, 1), padding=(1, 0)),
-            nn.ReLU(),
-        )
-
-        # After convs: (B, C=64, T, F)
-        self.gru = nn.GRU(
-            input_size=64 * n_features,
-            hidden_size=128,
-            num_layers=1,
-            batch_first=True,
-        )
-
-        self.fc = nn.Linear(128, NUM_CLASSES)
-
-    def forward(self, x):
-        # x: (B, T, F)
-        B, T, F = x.shape
-
-        x = x.unsqueeze(1)          # (B, 1, T, F)
-        x = self.conv_block_1(x)    # (B, 32, T, F)
-        x = self.conv_block_2(x)    # (B, 64, T, F)
-
-        x = x.permute(0, 2, 1, 3)   # (B, T, C, F)
-        x = x.reshape(B, T, -1)    # (B, T, C*F)
-
-        _, h = self.gru(x)          # h: (1, B, 128)
-        h = h.squeeze(0)
-
-        return self.fc(h)
 
 # =============================================================================
 # TRAIN / EVAL
@@ -241,7 +192,7 @@ def main():
     print(f"Train samples: {len(train_ds):,}")
     print(f"Val samples  : {len(val_ds):,}")
 
-    model = DeepLOB(n_features=F).to(DEVICE)
+    model = DeepLOB(n_features=F, num_classes=NUM_CLASSES).to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     criterion = nn.CrossEntropyLoss(weight=w) if w is not None else nn.CrossEntropyLoss()
 
