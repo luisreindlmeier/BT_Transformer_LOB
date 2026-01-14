@@ -241,8 +241,8 @@ def main() -> None:
     print(f"DROP_ZERO_RET  : {DROP_ZERO_RET}")
     print("=" * 90)
 
-    msg_files = sorted(p for p in DATA_ROOT.iterdir() if "message" in p.name)
-    ob_files = sorted(p for p in DATA_ROOT.iterdir() if "orderbook" in p.name)
+    msg_files = sorted(p for p in DATA_ROOT.iterdir() if "message" in p.name and not p.name.startswith("."))
+    ob_files = sorted(p for p in DATA_ROOT.iterdir() if "orderbook" in p.name and not p.name.startswith("."))
     if not msg_files or not ob_files:
         raise RuntimeError(f"Missing message/orderbook files in {DATA_ROOT}")
 
