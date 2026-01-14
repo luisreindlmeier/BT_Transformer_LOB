@@ -14,13 +14,9 @@ wandb/
 checkpoints/
 
 # Data (too large for Git)
-data/00_raw/
-data/01_preprocessed/
-data/02_split/
-data/03_normalized/
-data/03_normalized_NEW/
-data/04_windows/
-data/04_windows_NEW/
+# Ignore the entire data directory to avoid pushing proprietary or large datasets
+data/
+thesis_output/
 *.npy
 *.parquet
 
