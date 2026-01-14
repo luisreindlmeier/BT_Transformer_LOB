@@ -16,6 +16,8 @@ from torch.utils.data import Dataset, DataLoader
 
 from sklearn.metrics import f1_score, confusion_matrix
 
+from sklearn.metrics import f1_score, confusion_matrix, accuracy_score, precision_score, recall_score
+
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 from models.simple_mlp import SimpleMLP
@@ -34,10 +36,10 @@ AUTO_TAU_TARGET_STAT_PCT = 0.6
 N_EVENT_FEATURES = 9
 
 BATCH_SIZE = 512 if DEVICE in ("mps", "cuda") else 256
-EPOCHS = 50
+EPOCHS = 10
 LR_MAX = 2e-3
 WEIGHT_DECAY = 0.01
-PATIENCE = 10
+PATIENCE = 3
 LABEL_SMOOTHING = 0.1
 USE_SCHEDULER = True
 CLIP_GRAD_NORM = 1.0
@@ -92,6 +94,38 @@ def macro_f1_true(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
 def cm_true(y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
     return confusion_matrix(y_true, y_pred, labels=[0, 1, 2])
+
+def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
+    """Compute comprehensive metrics: accuracy, precision, recall, F1 per class + macro."""
+    acc = accuracy_score(y_true, y_pred)
+    prec_per_class = precision_score(y_true, y_pred, labels=[0, 1, 2], zero_division=0, average=None)
+    rec_per_class = recall_score(y_true, y_pred, labels=[0, 1, 2], zero_division=0, average=None)
+    f1_per_class = (2 * prec_per_class * rec_per_class) / (prec_per_class + rec_per_class + 1e-12)
+    macro_f1 = macro_f1_true(y_true, y_pred)
+    cm = cm_true(y_true, y_pred)
+    
+    return {
+        "accuracy": float(acc),
+        "macro_f1": float(macro_f1),
+        "precision_down": float(prec_per_class[0]),
+        "precision_stat": float(prec_per_class[1]),
+        "precision_up": float(prec_per_class[2]),
+        "recall_down": float(rec_per_class[0]),
+        "recall_stat": float(rec_per_class[1]),
+        "recall_up": float(rec_per_class[2]),
+        "f1_down": float(f1_per_class[0]),
+        "f1_stat": float(f1_per_class[1]),
+        "f1_up": float(f1_per_class[2]),
+        "cm_true_down_pred_down": int(cm[0, 0]),
+        "cm_true_down_pred_stat": int(cm[0, 1]),
+        "cm_true_down_pred_up": int(cm[0, 2]),
+        "cm_true_stat_pred_down": int(cm[1, 0]),
+        "cm_true_stat_pred_stat": int(cm[1, 1]),
+        "cm_true_stat_pred_up": int(cm[1, 2]),
+        "cm_true_up_pred_down": int(cm[2, 0]),
+        "cm_true_up_pred_stat": int(cm[2, 1]),
+        "cm_true_up_pred_up": int(cm[2, 2]),
+    }
 
 def print_cm(cm: np.ndarray) -> None:
     # rows=true, cols=pred
@@ -263,7 +297,8 @@ def run_epoch(model, loader, criterion, optimizer, device: str, train: bool, sch
 
     f1 = macro_f1_true(y_true, y_pred)
     cm = cm_true(y_true, y_pred)
-    return float(np.mean(losses)), f1, cm
+    metrics = compute_metrics(y_true, y_pred)
+    return float(np.mean(losses)), f1, cm, metrics
 
 # -----------------------------------------------------------------------------
 # MAIN
@@ -401,13 +436,19 @@ def main():
         best_val = -1.0
         best_state = None
         no_improve = 0
+        
+        # CSV logging
+        import csv
+        csv_path = f"metrics_baseline_{feat_type}.csv"
+        csv_file = open(csv_path, "w", newline="")
+        
         for epoch in range(1, EPOCHS + 1):
             print(f"\nEpoch {epoch}/{EPOCHS}")
 
-            tr_loss, tr_f1, tr_cm = run_epoch(
+            tr_loss, tr_f1, tr_cm, tr_metrics = run_epoch(
                 model, train_loader, criterion, optimizer, DEVICE, train=True, scheduler=scheduler, should_stop=should_stop
             )
-            va_loss, va_f1, va_cm = run_epoch(
+            va_loss, va_f1, va_cm, va_metrics = run_epoch(
                 model, val_loader, criterion, optimizer, DEVICE, train=False, scheduler=None, should_stop=should_stop
             )
 
@@ -420,6 +461,17 @@ def main():
             print(f"Val   | loss={va_loss:.4e} | macro-F1={va_f1:.4f}")
             print_cm(va_cm)
 
+            # Log to CSV (write header on first epoch)
+            if epoch == 1:
+                fieldnames = ["epoch", "train_loss", "train_macro_f1", "val_loss", "val_macro_f1"] + list(va_metrics.keys())
+                csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+                csv_writer.writeheader()
+            
+            row = {"epoch": epoch, "train_loss": tr_loss, "train_macro_f1": tr_f1, "val_loss": va_loss, "val_macro_f1": va_f1}
+            row.update(va_metrics)
+            csv_writer.writerow(row)
+            csv_file.flush()
+
             if va_f1 > best_val:
                 best_val = va_f1
                 best_state = {k: v.cpu() for k, v in model.state_dict().items()}
@@ -430,6 +482,9 @@ def main():
             if no_improve >= PATIENCE:
                 print(f"Early stopping at epoch {epoch} (no val F1 improve for {PATIENCE} epochs)")
                 break
+
+        csv_file.close()
+        print(f"✓ Metrics saved to: {csv_path}")
 
         if best_state is not None:
             torch.save(best_state, f"best_baseline_{feat_type}.pt")

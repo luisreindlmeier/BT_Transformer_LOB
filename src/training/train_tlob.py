@@ -7,12 +7,13 @@ Defaults follow paper search ranges: d_model=256, heads=1, layers=3, lr=3e-4, T 
 from pathlib import Path
 import os
 import json
+import csv
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import Dataset, DataLoader, Subset
-from sklearn.metrics import f1_score, confusion_matrix
+from sklearn.metrics import f1_score, confusion_matrix, accuracy_score, precision_score, recall_score
 from tqdm import tqdm
 
 import sys
@@ -28,7 +29,7 @@ DEVICE = (
 )
 
 BATCH_SIZE = 128 if DEVICE != "cpu" else 64
-EPOCHS = 50
+EPOCHS = 10
 EPOCHS_FAST = 3
 FAST_MODE = False  # Full training on complete dataset
 MAX_TRAIN_SAMPLES = 20000
@@ -36,7 +37,7 @@ MAX_VAL_SAMPLES = 5000
 LR_MAX = 3e-4
 WEIGHT_DECAY = 0.01
 LOG_EVERY = 200
-PATIENCE = 10
+PATIENCE = 3
 LABEL_SMOOTHING = 0.1
 CLIP_GRAD_NORM = 1.0
 USE_SCHEDULER = True
@@ -80,6 +81,39 @@ def macro_f1_true(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
 def cm_true(y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
     return confusion_matrix(y_true, y_pred, labels=[0, 1, 2])
+
+
+def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
+    """Compute comprehensive metrics: accuracy, precision, recall, F1 per class + macro."""
+    acc = accuracy_score(y_true, y_pred)
+    prec_per_class = precision_score(y_true, y_pred, labels=[0, 1, 2], zero_division=0, average=None)
+    rec_per_class = recall_score(y_true, y_pred, labels=[0, 1, 2], zero_division=0, average=None)
+    f1_per_class = (2 * prec_per_class * rec_per_class) / (prec_per_class + rec_per_class + 1e-12)
+    macro_f1 = macro_f1_true(y_true, y_pred)
+    cm = cm_true(y_true, y_pred)
+    
+    return {
+        "accuracy": float(acc),
+        "macro_f1": float(macro_f1),
+        "precision_down": float(prec_per_class[0]),
+        "precision_stat": float(prec_per_class[1]),
+        "precision_up": float(prec_per_class[2]),
+        "recall_down": float(rec_per_class[0]),
+        "recall_stat": float(rec_per_class[1]),
+        "recall_up": float(rec_per_class[2]),
+        "f1_down": float(f1_per_class[0]),
+        "f1_stat": float(f1_per_class[1]),
+        "f1_up": float(f1_per_class[2]),
+        "cm_true_down_pred_down": int(cm[0, 0]),
+        "cm_true_down_pred_stat": int(cm[0, 1]),
+        "cm_true_down_pred_up": int(cm[0, 2]),
+        "cm_true_stat_pred_down": int(cm[1, 0]),
+        "cm_true_stat_pred_stat": int(cm[1, 1]),
+        "cm_true_stat_pred_up": int(cm[1, 2]),
+        "cm_true_up_pred_down": int(cm[2, 0]),
+        "cm_true_up_pred_stat": int(cm[2, 1]),
+        "cm_true_up_pred_up": int(cm[2, 2]),
+    }
 
 
 def print_cm(cm: np.ndarray) -> None:
@@ -158,7 +192,8 @@ def run_epoch(model, loader, optimizer, criterion, train=True, scheduler=None, s
 
     f1 = macro_f1_true(targets_all, preds_all)
     cm = cm_true(targets_all, preds_all)
-    return float(np.mean(losses)), float(f1), cm
+    metrics = compute_metrics(targets_all, preds_all)
+    return float(np.mean(losses)), float(f1), cm, metrics
 
 
 # =============================================================================
@@ -286,12 +321,25 @@ def main():
     best_state = None
     no_improve = 0
 
+    # CSV logging setup
+    csv_path = Path(f"metrics_tlob.csv")
+    csv_fieldnames = ["epoch", "train_loss", "train_macro_f1", "val_loss", "val_macro_f1",
+                      "val_accuracy", "val_precision_down", "val_precision_stat", "val_precision_up",
+                      "val_recall_down", "val_recall_stat", "val_recall_up",
+                      "val_f1_down", "val_f1_stat", "val_f1_up",
+                      "val_cm_true_down_pred_down", "val_cm_true_down_pred_stat", "val_cm_true_down_pred_up",
+                      "val_cm_true_stat_pred_down", "val_cm_true_stat_pred_stat", "val_cm_true_stat_pred_up",
+                      "val_cm_true_up_pred_down", "val_cm_true_up_pred_stat", "val_cm_true_up_pred_up"]
+    csv_file = open(csv_path, 'w', newline='')
+    csv_writer = csv.DictWriter(csv_file, fieldnames=csv_fieldnames)
+    csv_writer.writeheader()
+
     for epoch in range(1, epochs_total + 1):
         print(f"\nEpoch {epoch}/{epochs_total}")
-        tr_loss, tr_f1, tr_cm = run_epoch(
+        tr_loss, tr_f1, tr_cm, tr_metrics = run_epoch(
             model, train_loader, optimizer, criterion, train=True, scheduler=scheduler, should_stop=should_stop
         )
-        va_loss, va_f1, va_cm = run_epoch(
+        va_loss, va_f1, va_cm, va_metrics = run_epoch(
             model, val_loader, optimizer, criterion, train=False, scheduler=None, should_stop=should_stop
         )
 
@@ -305,6 +353,13 @@ def main():
         print(f"Val   | loss={va_loss:.4e} | macro-F1={va_f1:.4f}")
         print_cm(va_cm)
 
+        # Write metrics to CSV
+        csv_row = {"epoch": epoch, "train_loss": tr_loss, "train_macro_f1": tr_f1, 
+                   "val_loss": va_loss, "val_macro_f1": va_f1}
+        csv_row.update({f"val_{k}": v for k, v in va_metrics.items()})
+        csv_writer.writerow(csv_row)
+        csv_file.flush()
+
         if va_f1 > best_val_f1:
             best_val_f1 = va_f1
             best_state = {k: v.cpu() for k, v in model.state_dict().items()}
@@ -316,6 +371,7 @@ def main():
             print(f"Early stopping at epoch {epoch} (no val F1 improve for {PATIENCE} epochs)")
             break
 
+    csv_file.close()
     if best_state is not None:
         torch.save(best_state, "best_tlob.pt")
 

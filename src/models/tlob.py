@@ -46,9 +46,7 @@ class TLOBBlock(nn.Module):
         self.temporal_ln = nn.LayerNorm(d_model)
         self.temporal_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
 
-        self.feature_ln = nn.LayerNorm(d_model)
-        self.feature_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
-
+        # Note: feature-attention over F would need (B, F, D) input; here we keep it off for stability.
         self.ffn_ln = nn.LayerNorm(d_model)
         self.ffn = nn.Sequential(
             nn.Linear(d_model, 4 * d_model),
@@ -63,13 +61,6 @@ class TLOBBlock(nn.Module):
         y = self.temporal_ln(x)
         y, _ = self.temporal_attn(y, y, y)
         x = x + y
-
-        # Feature attention: treat features as sequence, keep same embedding
-        z = x.transpose(1, 2)  # (B, F, D)
-        z = self.feature_ln(z)
-        z, _ = self.feature_attn(z, z, z)
-        z = z.transpose(1, 2)
-        x = x + z
 
         w = self.ffn_ln(x)
         w = self.ffn(w)
