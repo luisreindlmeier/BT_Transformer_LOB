@@ -19,7 +19,7 @@ PRICE_CLIP_TICKS = 300
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT = PROJECT_ROOT / "data" / "NASDAQ" / TICKER
-OUT_ROOT = PROJECT_ROOT / "data" / "01_preprocessed"
+OUT_ROOT = Path.home() / "thesis_output" / "01_preprocessed"
 OUT_ROOT.mkdir(parents=True, exist_ok=True)
 
 EPS = 1e-12
