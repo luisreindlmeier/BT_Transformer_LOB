@@ -1,21 +1,18 @@
-# Limit Order Book Prediction with Transformers
-
-Bachelor Thesis Project - Deep Learning for Financial Market Prediction
+# Transformer-Based Prediction of Limit Order Book Dynamics for Market Making
 
 ## Overview
 
-This repository implements and compares different deep learning architectures for predicting mid-price movements in limit order books (LOB), with a focus on Transformer-based models.
+This repository implements and compares different deep learning architectures for predicting mid-price movements in limit order books (LOB), with a focus on a pure Transformer-based model.
 
 ## Project Structure
 
 ```
 thesis/
 ├── src/
-│   ├── preprocessing/         # Data preprocessing pipeline (steps 01-04)
+│   ├── preprocessing/        # Data preprocessing pipeline (steps 01-04)
 │   ├── models/               # Model architectures
 │   └── training/             # Training scripts
-├── data/                     # Data directories (raw & processed)
-└── lightning_logs/           # Training logs and checkpoints
+└── data/                     # Data directories (raw & processed)
 ```
 
 ## Setup
@@ -77,14 +74,14 @@ Training logs and checkpoints are saved in `lightning_logs/`.
 
 ## Data
 
-The project uses LOBSTER (Limit Order Book System - The Efficient Reconstructor) data for NASDAQ stocks:
+The project is bsaed on an academic license for LOBSTER (Limit Order Book System - The Efficient Reconstructor) Level 2 LOB data for four NASDAQ stocks covering 20 trading days from July 2023:
 - AAPL (Apple)
 - CSCO (Cisco)
 - GOOG (Google)
 - INTC (Intel)
 
-Additional benchmark: FI-2010 dataset
+Additionaly, the models were also trained and evaluated on the FI-2010 benchmark dataset given in a slightly altered structure.
 
 ## License
 
-This is a bachelor thesis project. All rights reserved.
+This is a bachelor thesis project. All rights reserved. For any questions or remarks, please contact `luis.reindlmeier@fs-students.de`

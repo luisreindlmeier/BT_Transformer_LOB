@@ -9,6 +9,7 @@ import numpy as np
 
 import torch
 import torch.nn as nn
+from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import f1_score, confusion_matrix
 
@@ -21,16 +22,20 @@ DEVICE = (
 )
 
 BATCH_SIZE = 128 if DEVICE != "cpu" else 64
-EPOCHS = 3
-LR = 2e-4
+EPOCHS = 50
+LR_MAX = 2e-3
 WEIGHT_DECAY = 0.01
 LOG_EVERY = 200
 
-D_MODEL = 128
+PATIENCE = 10
+LABEL_SMOOTHING = 0.1
+USE_SCHEDULER = True
+
+D_MODEL = 256
 N_HEADS = 8
-N_LAYERS = 4
+N_LAYERS = 6
 D_FF = 4 * D_MODEL
-DROPOUT = 0.1
+DROPOUT = 0.2
 
 NUM_CLASSES = 3
 TAU = None
@@ -165,7 +170,7 @@ class LiTTransformer(nn.Module):
 # TRAIN / EVAL
 # ------------------------------------------------------------
 
-def run_epoch(model, loader, optimizer, criterion, train: bool):
+def run_epoch(model, loader, optimizer, criterion, train: bool, scheduler=None):
     model.train() if train else model.eval()
 
     losses = []
@@ -187,6 +192,8 @@ def run_epoch(model, loader, optimizer, criterion, train: bool):
             if CLIP_GRAD_NORM is not None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), CLIP_GRAD_NORM)
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
 
         losses.append(loss.item())
         preds = torch.argmax(logits, dim=1)
@@ -270,22 +277,55 @@ def main():
 
     model = LiTTransformer(n_features=F, window=T).to(DEVICE)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
-    criterion = nn.CrossEntropyLoss(weight=w) if w is not None else nn.CrossEntropyLoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR_MAX, weight_decay=WEIGHT_DECAY)
+    scheduler = None
+    if USE_SCHEDULER:
+        scheduler = OneCycleLR(
+            optimizer,
+            max_lr=LR_MAX,
+            epochs=EPOCHS,
+            steps_per_epoch=len(train_loader),
+            pct_start=0.1,
+            div_factor=25.0,
+            final_div_factor=1e3,
+        )
+
+    criterion = nn.CrossEntropyLoss(
+        weight=w if w is not None else None,
+        label_smoothing=LABEL_SMOOTHING,
+    )
 
     best_val_f1 = -1.0
+    best_state = None
+    no_improve = 0
 
     for epoch in range(1, EPOCHS + 1):
         print(f"\nEpoch {epoch}/{EPOCHS}")
-        tr_loss, tr_f1, tr_cm = run_epoch(model, train_loader, optimizer, criterion, train=True)
-        va_loss, va_f1, va_cm = run_epoch(model, val_loader, optimizer, criterion, train=False)
+        tr_loss, tr_f1, tr_cm = run_epoch(
+            model, train_loader, optimizer, criterion, train=True, scheduler=scheduler
+        )
+        va_loss, va_f1, va_cm = run_epoch(
+            model, val_loader, optimizer, criterion, train=False, scheduler=None
+        )
 
         print(f"Train | loss={tr_loss:.4e} | macro-F1={tr_f1:.4f}")
         print_cm(tr_cm)
         print(f"Val   | loss={va_loss:.4e} | macro-F1={va_f1:.4f}")
         print_cm(va_cm)
 
-        best_val_f1 = max(best_val_f1, va_f1)
+        if va_f1 > best_val_f1:
+            best_val_f1 = va_f1
+            best_state = {k: v.cpu() for k, v in model.state_dict().items()}
+            no_improve = 0
+        else:
+            no_improve += 1
+
+        if no_improve >= PATIENCE:
+            print(f"Early stopping at epoch {epoch} (no val F1 improve for {PATIENCE} epochs)")
+            break
+
+    if best_state is not None:
+        torch.save(best_state, "best_lit_transformer.pt")
 
     print("\n" + "=" * 90)
     print(f"✔ Best Val Macro-F1: {best_val_f1:.4f}")
@@ -293,13 +333,7 @@ def main():
     print("If F1 plateaus, consider tuning: d_model, n_layers, LR, weight_decay, epochs.")
     print("=" * 90)
 
-
-if __name__ == "__main__":
-    main()
-
-
 import pytorch_lightning as pl
-from pathlib import Path
 
 from src.models.lit_model import LiT
 from src.models.datamodule import LOBDataModule
@@ -308,7 +342,8 @@ from src.models.datamodule import LOBDataModule
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def main():
+def main_lightning():
+    """Optional Lightning entrypoint (kept for compatibility; not run by default)."""
     dm = LOBDataModule(
         dataset_root=PROJECT_ROOT / "data/datasets/lit_eventbased/CSCO",
         batch_size=64,
