@@ -73,9 +73,8 @@ def _build_from_normalized(split: str) -> tuple:
     # valid samples determined by label availability (Step 01 already guards tail/day reset)
     valid = np.isfinite(y)
     idxs = np.nonzero(valid)[0]
+    n_samples = len(idxs)
 
-    # Optional subsampling to accelerate quick tests
-    
     # Pre-allocate output files
     X_path = OUT_ROOT / f"{split}_X.npy"
     y_path = OUT_ROOT / f"{split}_y.npy"
