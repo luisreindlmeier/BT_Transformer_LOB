@@ -28,11 +28,11 @@ DEVICE = (
     else ("cuda" if torch.cuda.is_available() else "cpu")
 )
 
-BATCH_SIZE = 128 if DEVICE != "cpu" else 64
+BATCH_SIZE = 256 if DEVICE != "cpu" else 64
 EPOCHS = 10
 LR_MAX = 2e-3
 WEIGHT_DECAY = 0.01
-LOG_EVERY = 200
+LOG_EVERY = 500
 
 PATIENCE = 3
 LABEL_SMOOTHING = 0.1
@@ -49,7 +49,7 @@ TAU = None
 AUTO_TAU_TARGET_STAT_PCT = 0.6
 
 NUM_WORKERS = 0
-PIN_MEMORY = False
+PIN_MEMORY = True if DEVICE != "cpu" else False  # MPS/CUDA benefit from pinned memory
 
 USE_CLASS_WEIGHTS = True
 CLIP_GRAD_NORM = 1.0
