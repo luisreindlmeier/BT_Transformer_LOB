@@ -27,7 +27,9 @@ DEVICE = (
     ("cuda" if torch.cuda.is_available() else "cpu")
 )
 
+# --- TRAINING CONFIGURATION (CENTRALIZED) ---
 TICKER = "CSCO"
+DATA_FRACTION = 0.1  # Train on 10% of dataset (can be overridden via CLI)
 # Try local data first, fallback to ~/thesis_output
 _local_data = Path(__file__).resolve().parent.parent.parent / "data" / "04_windows_NEW" / TICKER
 _vm_data = Path.home() / "thesis_output" / "04_windows_NEW" / TICKER
@@ -254,7 +256,7 @@ def make_loader(root: Path, split: str, feature_type: str, shuffle: bool, sample
         sampler=sampler,
         num_workers=NUM_WORKERS,
         pin_memory=PIN_MEMORY,
-        drop_last=True,  # Drop incomplete batches for stability
+        drop_last=False,  # Don't drop - skip incomplete batches in training loop instead
     )
     if NUM_WORKERS > 0:
         kwargs["timeout"] = DL_TIMEOUT
@@ -283,6 +285,11 @@ def run_epoch(model, loader, criterion, optimizer, device: str, train: bool, sch
         if should_stop is not None and should_stop[0]:
             print("\n[STOP] Graceful shutdown requested.")
             break
+        
+        # Skip incomplete batches in training (prevents DataLoader deadlock)
+        if train and X.shape[0] < BATCH_SIZE:
+            continue
+            
         X = X.to(device, non_blocking=False)
         y = y.to(device, non_blocking=False)
 
