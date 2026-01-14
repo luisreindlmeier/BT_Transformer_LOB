@@ -21,7 +21,10 @@ sys.path.append(str(Path(__file__).parent.parent))
 from models.tlob import TLOB
 
 TICKER = "CSCO"
-DATA_ROOT = Path.home() / "thesis_output" / "04_windows_NEW" / TICKER
+# Try local data first, fallback to ~/thesis_output
+_local_data = Path(__file__).resolve().parent.parent.parent / "data" / "04_windows_NEW" / TICKER
+_vm_data = Path.home() / "thesis_output" / "04_windows_NEW" / TICKER
+DATA_ROOT = _local_data if _local_data.exists() else _vm_data
 
 DEVICE = (
     "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
