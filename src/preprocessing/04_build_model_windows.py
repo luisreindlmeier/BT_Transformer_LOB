@@ -20,8 +20,6 @@ HORIZON_MS = 1000
 WINDOW = HORIZON_MS // TIME_GRID_MS
 DTYPE = np.float32
 CHUNK_SIZE = 25_000
-SUBSAMPLE_FRACTION = 0.1
-SUBSAMPLE_SEED = 42
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 IN_ROOT = Path.home() / "thesis_output" / "03_normalized_NEW"
@@ -53,7 +51,6 @@ def _build_from_normalized(split: str) -> tuple:
 
     assert len(events) == len(lob) == len(labels), "Alignment error"
 
-    # Use full data (no downsampling)
     events = events.reset_index(drop=True)
     lob = lob.reset_index(drop=True)
     labels = labels.reset_index(drop=True)
@@ -78,13 +75,7 @@ def _build_from_normalized(split: str) -> tuple:
     idxs = np.nonzero(valid)[0]
 
     # Optional subsampling to accelerate quick tests
-    if SUBSAMPLE_FRACTION is not None and 0 < SUBSAMPLE_FRACTION < 1:
-        m = max(1, int(np.ceil(len(idxs) * SUBSAMPLE_FRACTION)))
-        rng = np.random.default_rng(SUBSAMPLE_SEED) if SUBSAMPLE_SEED is not None else np.random.default_rng()
-        idxs = np.sort(rng.choice(idxs, size=m, replace=False))
-
-    n_samples = len(idxs)
-
+    
     # Pre-allocate output files
     X_path = OUT_ROOT / f"{split}_X.npy"
     y_path = OUT_ROOT / f"{split}_y.npy"
