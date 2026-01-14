@@ -213,7 +213,7 @@ def make_loader(root: Path, split: str, feature_type: str, shuffle: bool, sample
 # TRAIN / EVAL
 # -----------------------------------------------------------------------------
 
-def run_epoch(model, loader, criterion, optimizer, device: str, train: bool, scheduler=None):
+def run_epoch(model, loader, criterion, optimizer, device: str, train: bool, scheduler=None, should_stop=None):
     if train:
         model.train()
     else:
@@ -226,6 +226,10 @@ def run_epoch(model, loader, criterion, optimizer, device: str, train: bool, sch
     t0 = time.time()
 
     for step, (X, y) in enumerate(loader, 1):
+        # Check graceful stop signal (set by KeyboardInterrupt handler)
+        if should_stop is not None and should_stop[0]:
+            print("\n[STOP] Graceful shutdown requested.")
+            break
         X = X.to(device, non_blocking=False)
         y = y.to(device, non_blocking=False)
 
@@ -275,6 +279,16 @@ def main():
         torch.set_num_interop_threads(1)
     except Exception:
         pass
+
+    # Graceful shutdown flag (shared across epochs)
+    should_stop = [False]
+
+    def signal_handler(sig, frame):
+        print("\n[SIGNAL] Ctrl+C received. Graceful shutdown after current batch...")
+        should_stop[0] = True
+
+    import signal
+    signal.signal(signal.SIGINT, signal_handler)
     banner("BASELINE TRAINING — HARD SANITY CHECK + FEATURE ABLATION (FIXED)")
 
     # read meta if present to pick window / feature order
@@ -391,11 +405,16 @@ def main():
             print(f"\nEpoch {epoch}/{EPOCHS}")
 
             tr_loss, tr_f1, tr_cm = run_epoch(
-                model, train_loader, criterion, optimizer, DEVICE, train=True, scheduler=scheduler
+                model, train_loader, criterion, optimizer, DEVICE, train=True, scheduler=scheduler, should_stop=should_stop
             )
             va_loss, va_f1, va_cm = run_epoch(
-                model, val_loader, criterion, optimizer, DEVICE, train=False, scheduler=None
+                model, val_loader, criterion, optimizer, DEVICE, train=False, scheduler=None, should_stop=should_stop
             )
+
+            # Check graceful stop
+            if should_stop[0]:
+                print(f"Stopping training at epoch {epoch}.")
+                break
 
             print(f"Train | loss={tr_loss:.4e} | macro-F1={tr_f1:.4f}")
             print(f"Val   | loss={va_loss:.4e} | macro-F1={va_f1:.4f}")

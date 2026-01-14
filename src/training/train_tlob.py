@@ -5,6 +5,7 @@ Defaults follow paper search ranges: d_model=256, heads=1, layers=3, lr=3e-4, T 
 """
 
 from pathlib import Path
+import os
 import json
 import numpy as np
 import torch
@@ -115,7 +116,7 @@ class WindowDataset(Dataset):
 # TRAIN / EVAL
 # =============================================================================
 
-def run_epoch(model, loader, optimizer, criterion, train=True, scheduler=None):
+def run_epoch(model, loader, optimizer, criterion, train=True, scheduler=None, should_stop=None):
     model.train() if train else model.eval()
 
     losses = []
@@ -123,6 +124,10 @@ def run_epoch(model, loader, optimizer, criterion, train=True, scheduler=None):
 
     loop = tqdm(loader, leave=False)
     for i, (X, y) in enumerate(loop, 1):
+        # Check graceful stop signal
+        if should_stop is not None and should_stop[0]:
+            print("\n[STOP] Graceful shutdown requested.")
+            break
         X, y = X.to(DEVICE), y.to(DEVICE)
 
         if train:
@@ -161,6 +166,26 @@ def run_epoch(model, loader, optimizer, criterion, train=True, scheduler=None):
 # =============================================================================
 
 def main():
+    # Cap thread usage to avoid oversubscription freezes on CPU VMs
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("NUMEXPR_MAX_THREADS", "1")
+    try:
+        torch.set_num_threads(1)
+        torch.set_num_interop_threads(1)
+    except Exception:
+        pass
+
+    # Graceful shutdown flag
+    should_stop = [False]
+
+    def signal_handler(sig, frame):
+        print("\n[SIGNAL] Ctrl+C received. Graceful shutdown after current batch...")
+        should_stop[0] = True
+
+    import signal
+    signal.signal(signal.SIGINT, signal_handler)
+
     print("=" * 90)
     print("T-LOB TRAINING — DUAL ATTENTION")
     print(f"TICKER : {TICKER}")
@@ -264,11 +289,16 @@ def main():
     for epoch in range(1, epochs_total + 1):
         print(f"\nEpoch {epoch}/{epochs_total}")
         tr_loss, tr_f1, tr_cm = run_epoch(
-            model, train_loader, optimizer, criterion, train=True, scheduler=scheduler
+            model, train_loader, optimizer, criterion, train=True, scheduler=scheduler, should_stop=should_stop
         )
         va_loss, va_f1, va_cm = run_epoch(
-            model, val_loader, optimizer, criterion, train=False, scheduler=None
+            model, val_loader, optimizer, criterion, train=False, scheduler=None, should_stop=should_stop
         )
+
+        # Check graceful stop
+        if should_stop[0]:
+            print(f"Stopping training at epoch {epoch}.")
+            break
 
         print(f"Train | loss={tr_loss:.4e} | macro-F1={tr_f1:.4f}")
         print_cm(tr_cm)
