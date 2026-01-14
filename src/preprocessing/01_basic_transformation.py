@@ -247,61 +247,75 @@ def main() -> None:
     if not msg_files or not ob_files:
         raise RuntimeError(f"Missing message/orderbook files in {DATA_ROOT}")
 
-    print("\nLoading events...")
-    events_raw = pd.concat(
-        [pd.read_csv(f, header=None, names=RAW_EVENT_COLS, encoding="latin1") for f in msg_files],
-        ignore_index=True,
-    )
+    print("\nLoading and preprocessing files sequentially to save memory...")
     
-    # Drop rows with any NaN in critical columns (corrupted/incomplete lines)
-    n_before = len(events_raw)
-    events_raw = events_raw.dropna(subset=["time", "event_type", "size", "price", "direction"])
-    n_after = len(events_raw)
-    if n_before > n_after:
-        print(f"  [WARN] Dropped {n_before - n_after:,} rows with NaN values ({100*(n_before-n_after)/n_before:.2f}%)")
-    
-    events_raw = events_raw.drop(columns=["order_id"])
-
-    events_raw["time"] = events_raw["time"].astype(np.float64)
-    events_raw["event_type"] = events_raw["event_type"].astype(np.int32)
-    events_raw["size"] = events_raw["size"].astype(np.float64)
-    events_raw["price"] = events_raw["price"].astype(np.float64)
-    events_raw["direction"] = events_raw["direction"].astype(np.int32)
-
-    print("Loading orderbook...")
+    # Determine orderbook depth from first file
     sample = pd.read_csv(ob_files[0], nrows=1, header=None, encoding="latin1")
     n_levels = sample.shape[1] // 4
     if n_levels <= 0:
         raise RuntimeError("Invalid orderbook depth detected")
-
     ob_cols = build_orderbook_columns(n_levels)
-    ob_raw = pd.concat(
-        [pd.read_csv(f, header=None, names=ob_cols, encoding="latin1") for f in ob_files],
-        ignore_index=True,
-    )
     
-    # Drop rows with NaN (alignment safety)
-    n_before_ob = len(ob_raw)
-    ob_raw = ob_raw.dropna()
-    n_after_ob = len(ob_raw)
-    if n_before_ob > n_after_ob:
-        print(f"  [WARN] Dropped {n_before_ob - n_after_ob:,} orderbook rows with NaN ({100*(n_before_ob-n_after_ob)/n_before_ob:.2f}%)")
+    # Process files one at a time to avoid loading everything into memory
+    processed_chunks = []
+    total_rows_before = 0
+    total_rows_after = 0
+    
+    for i, (msg_f, ob_f) in enumerate(zip(msg_files, ob_files), 1):
+        print(f"  Processing file {i}/{len(msg_files)}: {msg_f.name}...")
+        
+        # Load events
+        events_chunk = pd.read_csv(msg_f, header=None, names=RAW_EVENT_COLS, encoding="latin1")
+        n_before = len(events_chunk)
+        events_chunk = events_chunk.dropna(subset=["time", "event_type", "size", "price", "direction"])
+        events_chunk = events_chunk.drop(columns=["order_id"])
+        events_chunk["time"] = events_chunk["time"].astype(np.float64)
+        events_chunk["event_type"] = events_chunk["event_type"].astype(np.int32)
+        events_chunk["size"] = events_chunk["size"].astype(np.float64)
+        events_chunk["price"] = events_chunk["price"].astype(np.float64)
+        events_chunk["direction"] = events_chunk["direction"].astype(np.int32)
+        
+        # Load orderbook
+        ob_chunk = pd.read_csv(ob_f, header=None, names=ob_cols, encoding="latin1")
+        ob_chunk = ob_chunk.dropna()
+        
+        n_after = min(len(events_chunk), len(ob_chunk))
+        total_rows_before += n_before
+        total_rows_after += n_after
+        
+        if len(events_chunk) != len(ob_chunk):
+            print(f"    [WARN] Length mismatch: events={len(events_chunk)}, ob={len(ob_chunk)}, using min={n_after}")
+            events_chunk = events_chunk.iloc[:n_after]
+            ob_chunk = ob_chunk.iloc[:n_after]
+        
+        # Compute mid and preprocess this chunk
+        mid_chunk = compute_mid_from_raw_ob(ob_chunk)
+        labels_chunk, mask_chunk = build_labels_and_mask(mid_chunk, events_chunk["time"])
+        
+        events_processed = preprocess_events(events_chunk, mid_chunk)
+        ob_processed = preprocess_orderbook(ob_chunk, mid_chunk, n_levels=n_levels)
+        
+        # Apply mask and save chunk
+        chunk_data = {
+            'events': events_processed.loc[mask_chunk].reset_index(drop=True),
+            'orderbook': ob_processed.loc[mask_chunk].reset_index(drop=True),
+            'labels': labels_chunk.loc[mask_chunk].reset_index(drop=True)
+        }
+        processed_chunks.append(chunk_data)
+        
+        # Free memory
+        del events_chunk, ob_chunk, mid_chunk, labels_chunk, mask_chunk, events_processed, ob_processed
+    
+    if total_rows_before > total_rows_after:
+        print(f"\n  Total dropped rows: {total_rows_before - total_rows_after:,} ({100*(total_rows_before-total_rows_after)/total_rows_before:.2f}%)")
+    
+    # Concatenate all processed chunks
+    print("\nConcatenating processed chunks...")
+    events = pd.concat([c['events'] for c in processed_chunks], ignore_index=True)
+    orderbook = pd.concat([c['orderbook'] for c in processed_chunks], ignore_index=True)
+    labels = pd.concat([c['labels'] for c in processed_chunks], ignore_index=True)
 
-    if len(events_raw) != len(ob_raw):
-        raise RuntimeError(f"Alignment error: events={len(events_raw)} vs ob={len(ob_raw)}")
-
-    mid_raw = compute_mid_from_raw_ob(ob_raw)
-
-    labels_full, mask = build_labels_and_mask(mid_raw, events_raw["time"]) 
-
-    print("\nPreprocessing features...")
-    events_full = preprocess_events(events_raw, mid_raw)
-    ob_full = preprocess_orderbook(ob_raw, mid_raw, n_levels=n_levels)
-
-    events = events_full.loc[mask].reset_index(drop=True)
-    orderbook = ob_full.loc[mask].reset_index(drop=True)
-    labels = labels_full.loc[mask].reset_index(drop=True)
-
+    # Save to parquet
     events_path = OUT_ROOT / f"events_{TICKER}.parquet"
     ob_path = OUT_ROOT / f"orderbook_{TICKER}.parquet"
     y_path = OUT_ROOT / f"labels_{TICKER}.parquet"
