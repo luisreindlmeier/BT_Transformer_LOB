@@ -51,6 +51,22 @@ DL_TIMEOUT = int(os.getenv("DL_TIMEOUT", "120"))  # seconds for worker recv (if 
 PREFETCH_FACTOR = int(os.getenv("PREFETCH_FACTOR", "2"))
 PERSISTENT_WORKERS = False
 
+def make_loader(ds, batch_size, shuffle):
+    """Create DataLoader with timeout only if NUM_WORKERS > 0 (required by PyTorch)."""
+    kwargs = dict(
+        dataset=ds,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=NUM_WORKERS,
+        pin_memory=PIN_MEMORY,
+        drop_last=False,
+    )
+    if NUM_WORKERS > 0:
+        kwargs["timeout"] = DL_TIMEOUT
+        kwargs["prefetch_factor"] = PREFETCH_FACTOR
+        kwargs["persistent_workers"] = PERSISTENT_WORKERS
+    return DataLoader(**kwargs)
+
 USE_CLASS_WEIGHTS = True
 
 FEATURE_CONFIGS = [
@@ -236,9 +252,9 @@ def make_loader(root: Path, split: str, feature_type: str, shuffle: bool, sample
         num_workers=NUM_WORKERS,
         pin_memory=PIN_MEMORY,
         drop_last=False,
-        timeout=DL_TIMEOUT,
     )
     if NUM_WORKERS > 0:
+        kwargs["timeout"] = DL_TIMEOUT
         kwargs["prefetch_factor"] = PREFETCH_FACTOR
         kwargs["persistent_workers"] = PERSISTENT_WORKERS
     return DataLoader(**kwargs)
