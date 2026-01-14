@@ -35,7 +35,7 @@ TAU = None
 AUTO_TAU_TARGET_STAT_PCT = 0.6
 N_EVENT_FEATURES = 9
 
-BATCH_SIZE = 512 if DEVICE in ("mps", "cuda") else 256
+BATCH_SIZE = 64  # Reduced for CPU stability (was 512 GPU / 256 CPU)
 EPOCHS = 10
 LR_MAX = 2e-3
 WEIGHT_DECAY = 0.01
@@ -251,7 +251,7 @@ def make_loader(root: Path, split: str, feature_type: str, shuffle: bool, sample
         sampler=sampler,
         num_workers=NUM_WORKERS,
         pin_memory=PIN_MEMORY,
-        drop_last=False,
+        drop_last=True,  # Drop incomplete batches for stability
     )
     if NUM_WORKERS > 0:
         kwargs["timeout"] = DL_TIMEOUT
@@ -402,24 +402,10 @@ def main():
     # ablation loop
     results = {}
 
-    # build a sampler to rebalance train split towards ~20/60/20
-    target_pct = np.array([0.2, 0.6, 0.2], dtype=np.float64)
-    current_pct = tr_counts / tr_counts.sum()
-    weights = np.zeros_like(y_train, dtype=np.float64)
-    per_class_weight = target_pct / np.maximum(current_pct, 1e-12)
-    for cls, w_cls in enumerate(per_class_weight):
-        weights[y_train == cls] = w_cls
-    weights = weights / weights.mean()  # normalize for stability
-    sampler = torch.utils.data.WeightedRandomSampler(
-        torch.tensor(weights, dtype=torch.double),
-        num_samples=len(y_train),
-        replacement=True,
-    )
-
     for feat_type, feat_name in FEATURE_CONFIGS:
         banner(f"TRAINING: {feat_name}")
 
-        train_loader = make_loader(DATA_ROOT, "train", feat_type, shuffle=True, sampler=sampler, window_override=WINDOW)
+        train_loader = make_loader(DATA_ROOT, "train", feat_type, shuffle=True, sampler=None, window_override=WINDOW)
         val_loader   = make_loader(DATA_ROOT, "val", feat_type, shuffle=False, sampler=None, window_override=WINDOW)
 
         # infer input dim
