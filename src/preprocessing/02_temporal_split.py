@@ -1,10 +1,11 @@
 """Step 02: Split preprocessed data into train/val/test by time."""
 
 from pathlib import Path
+import os
 import json
 import pandas as pd
 
-TICKER = "CSCO"
+TICKER = os.getenv("TICKER", "CSCO")
 
 TRAIN_RATIO = 0.70
 VAL_RATIO   = 0.15

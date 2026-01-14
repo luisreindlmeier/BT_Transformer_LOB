@@ -1,11 +1,12 @@
 """Step 03: Fit z-score normalization on train split and apply to all splits."""
 
 from pathlib import Path
+import os
 import json
 import numpy as np
 import pandas as pd
 
-TICKER = "CSCO"
+TICKER = os.getenv("TICKER", "CSCO")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 IN_ROOT  = Path.home() / "thesis_output" / "02_split" / TICKER

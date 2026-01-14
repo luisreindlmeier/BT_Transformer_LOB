@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import json
 import numpy as np
 import pandas as pd
 
-TICKER = "CSCO"
+TICKER = os.getenv("TICKER", "CSCO")
 
 HORIZON_MS: int | tuple[int, int] | None = None
 HORIZON_MS_MODE: str = "upper"

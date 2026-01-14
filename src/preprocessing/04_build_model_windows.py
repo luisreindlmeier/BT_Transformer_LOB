@@ -1,6 +1,7 @@
 """Step 04: Build fixed-length sliding windows for sequence models."""
 
 from pathlib import Path
+import os
 import json
 import time
 import gc
@@ -14,7 +15,7 @@ except Exception:
     pq = None
     pa = None
 
-TICKER = "CSCO"
+TICKER = os.getenv("TICKER", "CSCO")
 TIME_GRID_MS = 10
 HORIZON_MS = 1000
 WINDOW = HORIZON_MS // TIME_GRID_MS
