@@ -10,13 +10,14 @@ import pandas as pd
 
 TICKER = os.getenv("TICKER", "CSCO")
 
-HORIZON_MS: int | tuple[int, int] | None = None
-HORIZON_MS_MODE: str = "upper"
+# Event-based horizon (in number of events)
 HORIZON_EVENTS = 10
 TICK_SIZE = 100.0
-EVENT_REL_PRICE_CLIP = 0.05
 DROP_ZERO_RET = False
 PRICE_CLIP_TICKS = 300
+
+# Robust day-reset detection: if time gap > 8h, treat as new trading session
+MAX_INTRA_SESSION_SEC = 8 * 3600
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT = PROJECT_ROOT / "data" / "NASDAQ" / TICKER
@@ -92,8 +93,7 @@ def preprocess_events(events_raw: pd.DataFrame, mid_raw: np.ndarray) -> pd.DataF
 
     price = events_raw["price"].to_numpy(dtype=np.float64, copy=False)
     rel_price = (price - mid_raw) / (mid_raw + EPS)
-    rel_price = np.clip(rel_price, -EVENT_REL_PRICE_CLIP, EVENT_REL_PRICE_CLIP).astype(np.float32)
-    out["rel_event_price"] = rel_price
+    out["rel_event_price"] = rel_price.astype(np.float32)  # No clipping for consistency
 
     out = pd.concat([out, one_hot_event_type(events_raw["event_type"])], axis=1)
     return out.astype(np.float32)
@@ -130,114 +130,47 @@ def preprocess_orderbook(ob_raw: pd.DataFrame, mid_raw: np.ndarray, n_levels: in
 
 def build_labels_and_mask(mid_raw: np.ndarray, time_s: pd.Series) -> tuple[pd.DataFrame, np.ndarray]:
     """
-    Build y_ret safely (event-based or time-based), avoiding day-cross leakage.
-
-    Modes:
-      - Event-based (HORIZON_MS is None):
-          y_ret[t] = log(mid[t+H_events]) - log(mid[t])
-      - Time-based (HORIZON_MS is int ms):
-          y_ret[t] = log(mid[t']) - log(mid[t]) where time[t'] >= time[t] + H_ms
-          and t' is constrained to remain within the same trading day segment
-
-    Returns:
-      labels_full (length N, with NaN where invalid / tail)
-      mask (length N) boolean, true where label is valid (+ optional drop_zero)
+    Build y_ret (event-based horizon) with day-reset safety.
+    y_ret[t] = log(mid[t+H]) - log(mid[t]) where H = HORIZON_EVENTS
+    Avoids cross-day leakage by detecting trading session resets.
     """
     N = len(mid_raw)
+    h = int(HORIZON_EVENTS)
+    
+    # Event-based labels: look H events ahead
     y = np.full(N, np.nan, dtype=np.float32)
-
-    if HORIZON_MS is None:
-        # Event-based horizon
-        if HORIZON_EVENTS is None or HORIZON_EVENTS <= 0:
-            y[:] = 0.0
-            valid = np.ones(N, dtype=bool)
-        else:
-            h = int(HORIZON_EVENTS)
-            mid_now = mid_raw[:-h].astype(np.float64, copy=False)
-            mid_fut = mid_raw[h:].astype(np.float64, copy=False)
-            y_val = (np.log(mid_fut + EPS) - np.log(mid_now + EPS)).astype(np.float32)
-            y[: N - h] = y_val
-            valid = np.isfinite(y)
-    else:
-        # Time-based horizon (milliseconds)
-        if isinstance(HORIZON_MS, tuple):
-            L_ms, U_ms = int(HORIZON_MS[0]), int(HORIZON_MS[1])
-            if L_ms > U_ms:
-                L_ms, U_ms = U_ms, L_ms
-            L_sec = float(L_ms) / 1000.0
-            U_sec = float(U_ms) / 1000.0
-        else:
-            L_sec = U_sec = float(int(HORIZON_MS)) / 1000.0
-
+    if h > 0 and h < N:
+        mid_now = mid_raw[:-h].astype(np.float64, copy=False)
+        mid_fut = mid_raw[h:].astype(np.float64, copy=False)
+        y_val = (np.log(mid_fut + EPS) - np.log(mid_now + EPS)).astype(np.float32)
+        y[:N - h] = y_val
+    
+    # Detect day resets: time goes backward or jumps > 8h (new session)
+    valid = np.isfinite(y).copy()
+    if N > 1:
         t = time_s.to_numpy(dtype=np.float64, copy=False)
-
-        # Identify day segments where time is non-decreasing
-        day_id = np.zeros(N, dtype=np.int32)
-        if N > 1:
-            dt = t[1:] - t[:-1]
-            resets = (dt < 0).astype(np.int32)
-            # cumulative sum of resets gives day index per row (shifted by 1 for alignment)
-            day_id[1:] = np.cumsum(resets)
-
-        # Two-pointer search within each day segment
-        # For each i, find j_low: t[j_low] >= t[i] + L_sec, j_up: t[j_up] >= t[i] + U_sec
-        for d in range(int(day_id.max()) + 1):
-            idx = np.nonzero(day_id == d)[0]
-            if len(idx) == 0:
-                continue
-            start = idx[0]
-            end = idx[-1] + 1  # exclusive
-            j_low = start
-            j_up = start
-            use_avg = (HORIZON_MS_MODE == "avg")
-            use_lower = (HORIZON_MS_MODE == "lower")
-            use_upper = (HORIZON_MS_MODE == "upper") or (not (use_avg or use_lower))
-
-            for i in range(start, end):
-                target_low = t[i] + L_sec
-                target_up = t[i] + U_sec
-
-                if j_low < i:
-                    j_low = i
-                if j_up < i:
-                    j_up = i
-
-                while j_low < end and t[j_low] < target_low:
-                    j_low += 1
-                while j_up < end and t[j_up] < target_up:
-                    j_up += 1
-
-                ret_low = np.nan
-                ret_up = np.nan
-                if j_low < end:
-                    ret_low = (np.log(float(mid_raw[j_low]) + EPS) - np.log(float(mid_raw[i]) + EPS)).astype(np.float32)
-                if j_up < end:
-                    ret_up = (np.log(float(mid_raw[j_up]) + EPS) - np.log(float(mid_raw[i]) + EPS)).astype(np.float32)
-
-                if use_avg:
-                    if np.isfinite(ret_low) and np.isfinite(ret_up):
-                        y[i] = np.float32(0.5 * (float(ret_low) + float(ret_up)))
-                    else:
-                        y[i] = np.nan
-                elif use_lower:
-                    y[i] = ret_low
-                else:  # upper (default)
-                    y[i] = ret_up
-
-        valid = np.isfinite(y)
-
+        dt = t[1:] - t[:-1]
+        is_reset = (dt < 0) | (dt > MAX_INTRA_SESSION_SEC)
+        reset_indices = np.where(is_reset)[0] + 1  # +1 to align with time array
+        
+        # Invalidate labels that cross a reset boundary
+        for reset_idx in reset_indices:
+            # Invalidate [reset_idx - h, reset_idx) to avoid cross-boundary labels
+            start_invalid = max(0, reset_idx - h)
+            y[start_invalid:reset_idx] = np.nan
+            valid[start_invalid:reset_idx] = False
+    
     if DROP_ZERO_RET:
         valid &= (y != 0.0)
-
+    
     labels = pd.DataFrame({"y_ret": y})
     return labels, valid
 
 def main() -> None:
     print("=" * 90)
-    print("STEP 01 — PREPROCESS RAW LOBSTER (TRAINING-SAFE, FI-2010/LiT STYLE)")
+    print("STEP 01 — PREPROCESS RAW LOBSTER (EVENT-BASED, TRAINING-SAFE)")
     print(f"TICKER         : {TICKER}")
     print(f"HORIZON_EVENTS : {HORIZON_EVENTS}")
-    print(f"HORIZON_MS     : {HORIZON_MS}")
     print(f"TICK_SIZE      : {TICK_SIZE}")
     print(f"DROP_ZERO_RET  : {DROP_ZERO_RET}")
     print("=" * 90)
@@ -264,10 +197,11 @@ def main() -> None:
     for i, (msg_f, ob_f) in enumerate(zip(msg_files, ob_files), 1):
         print(f"  Processing file {i}/{len(msg_files)}: {msg_f.name}...")
         
-        # Load events
+        # Load and clean events
         events_chunk = pd.read_csv(msg_f, header=None, names=RAW_EVENT_COLS, encoding="latin1")
         n_before = len(events_chunk)
         events_chunk = events_chunk.dropna(subset=["time", "event_type", "size", "price", "direction"])
+        events_chunk = events_chunk.reset_index(drop=True)  # FIX: Reset indices after dropna
         events_chunk = events_chunk.drop(columns=["order_id"])
         events_chunk["time"] = events_chunk["time"].astype(np.float64)
         events_chunk["event_type"] = events_chunk["event_type"].astype(np.int32)
@@ -275,18 +209,19 @@ def main() -> None:
         events_chunk["price"] = events_chunk["price"].astype(np.float64)
         events_chunk["direction"] = events_chunk["direction"].astype(np.int32)
         
-        # Load orderbook
+        # Load and clean orderbook
         ob_chunk = pd.read_csv(ob_f, header=None, names=ob_cols, encoding="latin1")
         ob_chunk = ob_chunk.dropna()
+        ob_chunk = ob_chunk.reset_index(drop=True)  # FIX: Reset indices after dropna
         
+        # Ensure alignment: take min length
         n_after = min(len(events_chunk), len(ob_chunk))
+        if n_after < max(len(events_chunk), len(ob_chunk)):
+            events_chunk = events_chunk.iloc[:n_after].reset_index(drop=True)
+            ob_chunk = ob_chunk.iloc[:n_after].reset_index(drop=True)
+        
         total_rows_before += n_before
         total_rows_after += n_after
-        
-        if len(events_chunk) != len(ob_chunk):
-            print(f"    [WARN] Length mismatch: events={len(events_chunk)}, ob={len(ob_chunk)}, using min={n_after}")
-            events_chunk = events_chunk.iloc[:n_after]
-            ob_chunk = ob_chunk.iloc[:n_after]
         
         # Compute mid and preprocess this chunk
         mid_chunk = compute_mid_from_raw_ob(ob_chunk)
@@ -346,9 +281,11 @@ def main() -> None:
             "y_ret": "log(mid[t+H]) - log(mid[t])",
         },
         "notes": [
-            "No z-score normalization in Step 01 (avoid leakage).",
-            "NO global clipping of LOB distances in Step 01 (keeps deep-level info).",
-            "One mask is applied to events/orderbook/labels to avoid index drift.",
+            "Event-based horizon only (HORIZON_EVENTS).",
+            "No z-score normalization (avoid data leakage from future stats).",
+            "No clipping of rel_event_price (consistency with LOB features).",
+            "Day-reset detection: time jumps > 8h treated as new session.",
+            "Indices reset after dropna to prevent drift.",
         ],
     }
     manifest.write_text(json.dumps(meta, indent=2))
