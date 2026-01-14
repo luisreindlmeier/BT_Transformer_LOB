@@ -251,6 +251,14 @@ def main() -> None:
         [pd.read_csv(f, header=None, names=RAW_EVENT_COLS, encoding="latin1") for f in msg_files],
         ignore_index=True,
     )
+    
+    # Drop rows with any NaN in critical columns (corrupted/incomplete lines)
+    n_before = len(events_raw)
+    events_raw = events_raw.dropna(subset=["time", "event_type", "size", "price", "direction"])
+    n_after = len(events_raw)
+    if n_before > n_after:
+        print(f"  [WARN] Dropped {n_before - n_after:,} rows with NaN values ({100*(n_before-n_after)/n_before:.2f}%)")
+    
     events_raw = events_raw.drop(columns=["order_id"])
 
     events_raw["time"] = events_raw["time"].astype(np.float64)
@@ -270,6 +278,13 @@ def main() -> None:
         [pd.read_csv(f, header=None, names=ob_cols, encoding="latin1") for f in ob_files],
         ignore_index=True,
     )
+    
+    # Drop rows with NaN (alignment safety)
+    n_before_ob = len(ob_raw)
+    ob_raw = ob_raw.dropna()
+    n_after_ob = len(ob_raw)
+    if n_before_ob > n_after_ob:
+        print(f"  [WARN] Dropped {n_before_ob - n_after_ob:,} orderbook rows with NaN ({100*(n_before_ob-n_after_ob)/n_before_ob:.2f}%)")
 
     if len(events_raw) != len(ob_raw):
         raise RuntimeError(f"Alignment error: events={len(events_raw)} vs ob={len(ob_raw)}")

@@ -10,6 +10,7 @@ import numpy as np
 
 import torch
 import torch.nn as nn
+from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import Dataset, DataLoader
 
 from sklearn.metrics import f1_score, confusion_matrix
@@ -32,8 +33,13 @@ AUTO_TAU_TARGET_STAT_PCT = 0.6
 N_EVENT_FEATURES = 9
 
 BATCH_SIZE = 512 if DEVICE in ("mps", "cuda") else 256
-EPOCHS = 1
-LR = 1e-3
+EPOCHS = 50
+LR_MAX = 2e-3
+WEIGHT_DECAY = 0.01
+PATIENCE = 10
+LABEL_SMOOTHING = 0.1
+USE_SCHEDULER = True
+CLIP_GRAD_NORM = 1.0
 
 NUM_WORKERS = 0
 PIN_MEMORY = False
@@ -197,7 +203,7 @@ def make_loader(root: Path, split: str, feature_type: str, shuffle: bool, sample
 # TRAIN / EVAL
 # -----------------------------------------------------------------------------
 
-def run_epoch(model, loader, criterion, optimizer, device: str, train: bool):
+def run_epoch(model, loader, criterion, optimizer, device: str, train: bool, scheduler=None):
     if train:
         model.train()
     else:
@@ -216,13 +222,16 @@ def run_epoch(model, loader, criterion, optimizer, device: str, train: bool):
         if train:
             optimizer.zero_grad(set_to_none=True)
 
-        # autocast: CUDA ok; MPS autocast is sometimes flaky — keep it off for stability
         logits = model(X)
         loss = criterion(logits, y)
 
         if train:
             loss.backward()
+            if CLIP_GRAD_NORM is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), CLIP_GRAD_NORM)
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
 
         losses.append(float(loss.item()))
         preds = torch.argmax(logits, dim=1)
@@ -337,22 +346,54 @@ def main():
         print(f"Val samples    : {len(val_loader.dataset):,}")
 
         model = SimpleMLP(input_dim).to(DEVICE)
-        optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=LR_MAX, weight_decay=WEIGHT_DECAY)
+        scheduler = None
+        if USE_SCHEDULER:
+            scheduler = OneCycleLR(
+                optimizer,
+                max_lr=LR_MAX,
+                epochs=EPOCHS,
+                steps_per_epoch=len(train_loader),
+                pct_start=0.1,
+                div_factor=25.0,
+                final_div_factor=1e3,
+            )
 
-        criterion = nn.CrossEntropyLoss(weight=w) if w is not None else nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(
+            weight=w if w is not None else None,
+            label_smoothing=LABEL_SMOOTHING,
+        )
 
         best_val = -1.0
+        best_state = None
+        no_improve = 0
         for epoch in range(1, EPOCHS + 1):
             print(f"\nEpoch {epoch}/{EPOCHS}")
 
-            tr_loss, tr_f1, tr_cm = run_epoch(model, train_loader, criterion, optimizer, DEVICE, train=True)
-            va_loss, va_f1, va_cm = run_epoch(model, val_loader, criterion, optimizer, DEVICE, train=False)
+            tr_loss, tr_f1, tr_cm = run_epoch(
+                model, train_loader, criterion, optimizer, DEVICE, train=True, scheduler=scheduler
+            )
+            va_loss, va_f1, va_cm = run_epoch(
+                model, val_loader, criterion, optimizer, DEVICE, train=False, scheduler=None
+            )
 
             print(f"Train | loss={tr_loss:.4e} | macro-F1={tr_f1:.4f}")
             print(f"Val   | loss={va_loss:.4e} | macro-F1={va_f1:.4f}")
             print_cm(va_cm)
 
-            best_val = max(best_val, va_f1)
+            if va_f1 > best_val:
+                best_val = va_f1
+                best_state = {k: v.cpu() for k, v in model.state_dict().items()}
+                no_improve = 0
+            else:
+                no_improve += 1
+
+            if no_improve >= PATIENCE:
+                print(f"Early stopping at epoch {epoch} (no val F1 improve for {PATIENCE} epochs)")
+                break
+
+        if best_state is not None:
+            torch.save(best_state, f"best_baseline_{feat_type}.pt")
 
         results[feat_type] = {"name": feat_name, "input_dim": input_dim, "best_val_f1": float(best_val)}
         print(f"\n✔ Best Val macro-F1: {best_val:.4f}")
