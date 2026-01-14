@@ -48,5 +48,12 @@ Thumbs.db
 
 # Google Cloud SDK
 google-cloud-sdk/
+google-cloud-cli*.tar.gz
+
+# Model checkpoints and archives
+*.pt
+*.tar.gz
+thesis.tar.gz
+best_*.pt
 
 *.egg-info/
