@@ -432,42 +432,5 @@ def main():
     print("If F1 plateaus, consider tuning: d_model, n_layers, LR, weight_decay, epochs.")
     print("=" * 90)
 
-import pytorch_lightning as pl
-
-from src.models.lit_model import LiT
-from src.models.datamodule import LOBDataModule
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-
-def main_lightning():
-    """Optional Lightning entrypoint (kept for compatibility; not run by default)."""
-    dm = LOBDataModule(
-        dataset_root=PROJECT_ROOT / "data/datasets/lit_eventbased/CSCO",
-        batch_size=64,
-        num_workers=2,
-    )
-
-    dm.setup()
-
-    model = LiT(
-        class_weights=dm.class_weights,
-    )
-
-    trainer = pl.Trainer(
-        max_epochs=3,
-        accelerator="mps",
-        devices=1,
-        precision="32-true",
-        enable_progress_bar=True,
-        num_sanity_val_steps=0,
-        val_check_interval=1.0,
-    )
-
-    trainer.fit(model, datamodule=dm)
-    trainer.test(model, datamodule=dm)
-
-
 if __name__ == "__main__":
     main()
