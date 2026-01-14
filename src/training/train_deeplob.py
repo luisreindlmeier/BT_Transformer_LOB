@@ -17,8 +17,8 @@ sys.path.append(str(Path(__file__).parent.parent))
 from models.deeplob import DeepLOB
 
 # --- TRAINING CONFIGURATION (CENTRALIZED) ---
-TICKER = "CSCO"
-DATA_FRACTION = 0.1  # Train on 10% of dataset (can be overridden via CLI)
+TICKER = os.getenv("TRAIN_TICKER", "CSCO")
+DATA_FRACTION = float(os.getenv("TRAIN_DATA_FRACTION", "0.1"))  # Train on 10% of dataset (can be overridden via CLI)
 # Try local data first, fallback to ~/thesis_output
 _local_data = Path(__file__).resolve().parent.parent.parent / "data" / "04_windows_NEW" / TICKER
 _vm_data = Path.home() / "thesis_output" / "04_windows_NEW" / TICKER
@@ -233,8 +233,14 @@ def main():
         tau=TAU,
     )
 
+    # Apply data fraction (subset training data)
+    if DATA_FRACTION < 1.0:
+        n_train = int(len(train_ds) * DATA_FRACTION)
+        train_ds = torch.utils.data.Subset(train_ds, range(n_train))
+        print(f"[DATA_FRACTION] Using {n_train:,} / {len(WindowDataset(DATA_ROOT / 'train_X.npy', DATA_ROOT / 'train_y.npy', tau=TAU)):,} train samples")
+
     # Print class distribution
-    y_train = train_ds.y
+    y_train = train_ds.dataset.y if isinstance(train_ds, torch.utils.data.Subset) else train_ds.y
     y_val = val_ds.y
     tr_counts = np.bincount(y_train, minlength=3)
     va_counts = np.bincount(y_val, minlength=3)

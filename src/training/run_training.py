@@ -21,6 +21,7 @@ Usage:
 import argparse
 import subprocess
 import sys
+import os
 from pathlib import Path
 from typing import List
 
@@ -68,29 +69,8 @@ def validate_args(args) -> tuple[List[str], List[str]]:
     return models, tickers
 
 
-def update_trainer_config(trainer_path: Path, ticker: str, data_fraction: float):
-    """Update TICKER and DATA_FRACTION in trainer script."""
-    with open(trainer_path, "r") as f:
-        content = f.read()
-
-    # Replace TICKER
-    lines = content.split("\n")
-    for i, line in enumerate(lines):
-        if line.startswith("TICKER = "):
-            lines[i] = f'TICKER = "{ticker}"'
-        elif line.startswith("DATA_FRACTION = "):
-            lines[i] = f"DATA_FRACTION = {data_fraction}"
-
-    updated_content = "\n".join(lines)
-
-    with open(trainer_path, "w") as f:
-        f.write(updated_content)
-
-    print(f"  Updated: TICKER={ticker}, DATA_FRACTION={data_fraction}")
-
-
 def run_trainer(model: str, ticker: str, data_fraction: float) -> int:
-    """Run a single trainer with given config."""
+    """Run a single trainer with given config via environment variables."""
     trainer_script = TRAINING_DIR / MODELS[model]
 
     if not trainer_script.exists():
@@ -99,16 +79,19 @@ def run_trainer(model: str, ticker: str, data_fraction: float) -> int:
 
     print(f"\n{'='*80}")
     print(f"Training: {model.upper()} on {ticker} ({data_fraction*100:.0f}% data)")
-    print(f"{'='*80}")
+    print(f"{'='*80}\n")
 
-    # Temporarily update config
-    update_trainer_config(trainer_script, ticker, data_fraction)
+    # Set environment variables (read by trainers at startup)
+    env = os.environ.copy()
+    env["TRAIN_TICKER"] = ticker
+    env["TRAIN_DATA_FRACTION"] = str(data_fraction)
 
-    # Run trainer
+    # Run trainer directly
     try:
         result = subprocess.run(
             [sys.executable, str(trainer_script)],
             cwd=TRAINING_DIR,
+            env=env,
             check=False,
         )
         return result.returncode

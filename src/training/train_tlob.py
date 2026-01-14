@@ -21,8 +21,8 @@ sys.path.append(str(Path(__file__).parent.parent))
 from models.tlob import TLOB
 
 # --- TRAINING CONFIGURATION (CENTRALIZED) ---
-TICKER = "CSCO"
-DATA_FRACTION = 0.1  # Train on 10% of dataset (can be overridden via CLI)
+TICKER = os.getenv("TRAIN_TICKER", "CSCO")
+DATA_FRACTION = float(os.getenv("TRAIN_DATA_FRACTION", "0.1"))  # Train on 10% of dataset (can be overridden via CLI)
 # Try local data first, fallback to ~/thesis_output
 _local_data = Path(__file__).resolve().parent.parent.parent / "data" / "04_windows_NEW" / TICKER
 _vm_data = Path.home() / "thesis_output" / "04_windows_NEW" / TICKER
@@ -271,7 +271,13 @@ def main():
 
     train_indices = None
     val_indices = None
-    if FAST_MODE:
+    
+    # Apply data fraction OR fast mode
+    if DATA_FRACTION < 1.0:
+        n_train = int(len(train_ds) * DATA_FRACTION)
+        train_indices = range(n_train)
+        print(f"[DATA_FRACTION] Using {n_train:,} / {len(train_ds):,} train samples")
+    elif FAST_MODE:
         train_indices = range(min(len(train_ds), MAX_TRAIN_SAMPLES))
         val_indices = range(min(len(val_ds), MAX_VAL_SAMPLES))
         print(f"\nFAST_MODE ON → using {len(train_indices)} train / {len(val_indices)} val samples")

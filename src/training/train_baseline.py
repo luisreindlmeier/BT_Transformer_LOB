@@ -28,8 +28,8 @@ DEVICE = (
 )
 
 # --- TRAINING CONFIGURATION (CENTRALIZED) ---
-TICKER = "CSCO"
-DATA_FRACTION = 0.1  # Train on 10% of dataset (can be overridden via CLI)
+TICKER = os.getenv("TRAIN_TICKER", "CSCO")
+DATA_FRACTION = float(os.getenv("TRAIN_DATA_FRACTION", "0.1"))  # Train on 10% of dataset (can be overridden via CLI)
 # Try local data first, fallback to ~/thesis_output
 _local_data = Path(__file__).resolve().parent.parent.parent / "data" / "04_windows_NEW" / TICKER
 _vm_data = Path.home() / "thesis_output" / "04_windows_NEW" / TICKER
@@ -382,7 +382,13 @@ def main():
     ds_train_all = WindowDataset(DATA_ROOT, "train", "all", N_EVENT_FEATURES, TAU, window_override=WINDOW)
     ds_val_all   = WindowDataset(DATA_ROOT, "val", "all", N_EVENT_FEATURES, TAU, window_override=WINDOW)
 
-    y_train = ds_train_all.y
+    # Apply data fraction (subset training data)
+    if DATA_FRACTION < 1.0:
+        n_train = int(len(ds_train_all) * DATA_FRACTION)
+        ds_train_all = torch.utils.data.Subset(ds_train_all, range(n_train))
+        print(f"[DATA_FRACTION] Using {n_train:,} / {len(WindowDataset(DATA_ROOT, 'train', 'all', N_EVENT_FEATURES, TAU, window_override=WINDOW)):,} train samples")
+
+    y_train = ds_train_all.dataset.y if isinstance(ds_train_all, torch.utils.data.Subset) else ds_train_all.y
     y_val   = ds_val_all.y
 
     # distributions
