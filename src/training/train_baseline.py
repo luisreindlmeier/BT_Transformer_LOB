@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import os
 import json
 import time
 import numpy as np
@@ -41,8 +42,12 @@ LABEL_SMOOTHING = 0.1
 USE_SCHEDULER = True
 CLIP_GRAD_NORM = 1.0
 
-NUM_WORKERS = 0
+# Safe DataLoader defaults (avoid deadlocks on CPU VMs)
+NUM_WORKERS = int(os.getenv("NUM_WORKERS", "0"))  # 0 == main process loading
 PIN_MEMORY = False
+DL_TIMEOUT = int(os.getenv("DL_TIMEOUT", "120"))  # seconds for worker recv (if workers>0)
+PREFETCH_FACTOR = int(os.getenv("PREFETCH_FACTOR", "2"))
+PERSISTENT_WORKERS = False
 
 USE_CLASS_WEIGHTS = True
 
@@ -189,15 +194,20 @@ def make_loader(root: Path, split: str, feature_type: str, shuffle: bool, sample
         tau=TAU,
         window_override=window_override,
     )
-    return DataLoader(
-        ds,
+    kwargs = dict(
+        dataset=ds,
         batch_size=BATCH_SIZE,
         shuffle=shuffle if sampler is None else False,
         sampler=sampler,
         num_workers=NUM_WORKERS,
         pin_memory=PIN_MEMORY,
         drop_last=False,
+        timeout=DL_TIMEOUT,
     )
+    if NUM_WORKERS > 0:
+        kwargs["prefetch_factor"] = PREFETCH_FACTOR
+        kwargs["persistent_workers"] = PERSISTENT_WORKERS
+    return DataLoader(**kwargs)
 
 # -----------------------------------------------------------------------------
 # TRAIN / EVAL
@@ -241,7 +251,8 @@ def run_epoch(model, loader, criterion, optimizer, device: str, train: bool, sch
 
         if step % 200 == 0:
             dt = time.time() - t0
-            print(f"  [{step:>5}] avg_loss={np.mean(losses[-200:]):.4e} | elapsed={dt:.1f}s")
+            phase = "train" if train else "val"
+            print(f"  [{phase} {step:>5}/{len(loader)}] avg_loss={np.mean(losses[-200:]):.4e} | elapsed={dt:.1f}s")
 
     y_true = np.concatenate(all_t).astype(np.int64)
     y_pred = np.concatenate(all_p).astype(np.int64)
@@ -255,6 +266,15 @@ def run_epoch(model, loader, criterion, optimizer, device: str, train: bool, sch
 # -----------------------------------------------------------------------------
 
 def main():
+    # Cap thread usage to avoid oversubscription freezes on CPU VMs
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("NUMEXPR_MAX_THREADS", "1")
+    try:
+        torch.set_num_threads(1)
+        torch.set_num_interop_threads(1)
+    except Exception:
+        pass
     banner("BASELINE TRAINING — HARD SANITY CHECK + FEATURE ABLATION (FIXED)")
 
     # read meta if present to pick window / feature order
