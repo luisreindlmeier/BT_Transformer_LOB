@@ -8,8 +8,8 @@ import pandas as pd
 TICKER = "CSCO"
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-IN_ROOT  = PROJECT_ROOT / "data" / "02_split" / TICKER
-OUT_ROOT = PROJECT_ROOT / "data" / "03_normalized_NEW" / TICKER
+IN_ROOT  = Path.home() / "thesis_output" / "02_split" / TICKER
+OUT_ROOT = Path.home() / "thesis_output" / "03_normalized_NEW" / TICKER
 OUT_ROOT.mkdir(parents=True, exist_ok=True)
 
 SPLITS = ["train", "val", "test"]

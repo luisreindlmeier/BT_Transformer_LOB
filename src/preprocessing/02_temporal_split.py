@@ -14,8 +14,8 @@ assert abs(TRAIN_RATIO + VAL_RATIO + TEST_RATIO - 1.0) < 1e-6
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-IN_ROOT  = PROJECT_ROOT / "data" / "01_preprocessed"
-OUT_ROOT = PROJECT_ROOT / "data" / "02_split" / TICKER
+IN_ROOT  = Path.home() / "thesis_output" / "01_preprocessed"
+OUT_ROOT = Path.home() / "thesis_output" / "02_split" / TICKER
 
 EVENTS_IN = IN_ROOT / f"events_{TICKER}.parquet"
 OB_IN     = IN_ROOT / f"orderbook_{TICKER}.parquet"

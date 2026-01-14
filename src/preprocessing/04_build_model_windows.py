@@ -24,8 +24,8 @@ SUBSAMPLE_FRACTION = 0.1
 SUBSAMPLE_SEED = 42
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-IN_ROOT = PROJECT_ROOT / "data" / "03_normalized_NEW"
-OUT_ROOT = PROJECT_ROOT / "data" / "04_windows_NEW" / TICKER
+IN_ROOT = Path.home() / "thesis_output" / "03_normalized_NEW"
+OUT_ROOT = Path.home() / "thesis_output" / "04_windows_NEW" / TICKER
 OUT_ROOT.mkdir(parents=True, exist_ok=True)
 
 SPLITS = ["train", "val"]
