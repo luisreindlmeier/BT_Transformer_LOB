@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import OneCycleLR
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Subset
 from sklearn.metrics import f1_score, confusion_matrix
 from tqdm import tqdm
 
@@ -19,7 +19,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from models.tlob import TLOB
 
 TICKER = "CSCO"
-DATA_ROOT = Path("data/04_windows_NEW") / TICKER
+DATA_ROOT = Path.home() / "thesis_output" / "04_windows_NEW" / TICKER
 
 DEVICE = (
     "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
@@ -28,6 +28,10 @@ DEVICE = (
 
 BATCH_SIZE = 128 if DEVICE != "cpu" else 64
 EPOCHS = 50
+EPOCHS_FAST = 3
+FAST_MODE = False  # Full training on complete dataset
+MAX_TRAIN_SAMPLES = 20000
+MAX_VAL_SAMPLES = 5000
 LR_MAX = 3e-4
 WEIGHT_DECAY = 0.01
 LOG_EVERY = 200
@@ -195,15 +199,25 @@ def main():
         w = class_weights_from_train(y_train).to(DEVICE)
         print(f"\nClass weights: {w.detach().cpu().numpy().round(3).tolist()}")
 
+    train_indices = None
+    val_indices = None
+    if FAST_MODE:
+        train_indices = range(min(len(train_ds), MAX_TRAIN_SAMPLES))
+        val_indices = range(min(len(val_ds), MAX_VAL_SAMPLES))
+        print(f"\nFAST_MODE ON → using {len(train_indices)} train / {len(val_indices)} val samples")
+
+    train_ds_eff = Subset(train_ds, train_indices) if train_indices is not None else train_ds
+    val_ds_eff = Subset(val_ds, val_indices) if val_indices is not None else val_ds
+
     train_loader = DataLoader(
-        train_ds,
+        train_ds_eff,
         batch_size=BATCH_SIZE,
         shuffle=True,
         num_workers=NUM_WORKERS,
         pin_memory=PIN_MEMORY,
     )
     val_loader = DataLoader(
-        val_ds,
+        val_ds_eff,
         batch_size=BATCH_SIZE,
         shuffle=False,
         num_workers=NUM_WORKERS,
@@ -212,8 +226,8 @@ def main():
 
     T, F = train_ds[0][0].shape
     print(f"\nInput shape : T={T}, F={F}")
-    print(f"Train samples: {len(train_ds):,}")
-    print(f"Val samples  : {len(val_ds):,}")
+    print(f"Train samples: {len(train_ds_eff):,} (orig {len(train_ds):,})")
+    print(f"Val samples  : {len(val_ds_eff):,} (orig {len(val_ds):,})")
 
     model = TLOB(
         n_features=F,
@@ -226,11 +240,12 @@ def main():
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR_MAX, weight_decay=WEIGHT_DECAY)
     scheduler = None
+    epochs_total = EPOCHS_FAST if FAST_MODE else EPOCHS
     if USE_SCHEDULER:
         scheduler = OneCycleLR(
             optimizer,
             max_lr=LR_MAX,
-            epochs=EPOCHS,
+            epochs=epochs_total,
             steps_per_epoch=len(train_loader),
             pct_start=0.1,
             div_factor=25.0,
@@ -246,8 +261,8 @@ def main():
     best_state = None
     no_improve = 0
 
-    for epoch in range(1, EPOCHS + 1):
-        print(f"\nEpoch {epoch}/{EPOCHS}")
+    for epoch in range(1, epochs_total + 1):
+        print(f"\nEpoch {epoch}/{epochs_total}")
         tr_loss, tr_f1, tr_cm = run_epoch(
             model, train_loader, optimizer, criterion, train=True, scheduler=scheduler
         )

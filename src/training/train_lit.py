@@ -14,7 +14,7 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import f1_score, confusion_matrix
 
 TICKER = "CSCO"
-DATA_ROOT = Path("data/04_windows_NEW") / TICKER
+DATA_ROOT = Path.home() / "thesis_output" / "04_windows_NEW" / TICKER
 
 DEVICE = (
     "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()

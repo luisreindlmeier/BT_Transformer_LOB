@@ -15,7 +15,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from models.deeplob import DeepLOB
 
 TICKER = "CSCO"
-DATA_ROOT = Path("data/04_windows_NEW") / TICKER
+DATA_ROOT = Path.home() / "thesis_output" / "04_windows_NEW" / TICKER
 
 DEVICE = (
     "mps" if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()

@@ -25,7 +25,7 @@ DEVICE = (
 )
 
 TICKER = "CSCO"
-DATA_ROOT = Path("data/04_windows_NEW") / TICKER
+DATA_ROOT = Path.home() / "thesis_output" / "04_windows_NEW" / TICKER
 
 WINDOW = None
 TAU = None
